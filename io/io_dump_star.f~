@@ -1,0 +1,77 @@
+c************************************************************************
+c                          IO_DUMP_PARAM.F
+c************************************************************************
+c IO_DUMP_PARAM dumps out the parameters for the integration. 
+c
+c      Input:
+c       dparfile      ==>  Name of file to write to (character*80)
+c            t0       ==> Initial time (real scalar)
+c            tstop    ==> final time (real scalar)
+c            dt       ==> time step  (real scalar)
+c            dtout    ==> time between binary outputs (real scalar)
+c            dtdump   ==> time between dumps  (real scalar)
+c            iflgchk  ==>  =0 don't run diagnostic routines
+c                         !=0 run them
+c      rmin,rmax      ==>  maximum and min distance from Sun
+c                                if <0  then don't check
+c                                    (real scalar)
+c       rmaxu         ==>  maximum distance from Sun in not bound
+c                                 if <0  then don't check
+c                                      (real scalar)
+c       qmin          ==> Smallest perihelion distance
+c                                 if <0  then don't check
+c                                      (real scalar)
+c       lclose        ==> .true. --> discard particle if it gets 
+c                                    too close to a planet. Read in that 
+c                                    distance in io_init_pl
+c                                      (logical*2 scalar)
+c       outfile       ==>  Name of binary output file (character*80)
+
+c
+c Remarks: 
+c Authors:  Martin Duncan
+c Date:    3/2/93 
+c Last revision:  5/10/94 HFL
+
+	subroutine io_dump_star(dparfile,dens,relv,cluslife,clusm,pluma,
+     &     xsun,ysun,zsun,vxsun,vysun,vzsun,inc,clusmin,clusmax)	
+
+	include '../swift.inc'
+	include 'io.inc'
+
+c...   Inputs
+	integer clusmin,clusmax
+	real*8 dens,relv,cluslife,xsun,ysun,zsun,vxsun,vysun
+        real*8 vzsun,clusm,pluma
+	character*(*) dparfile
+
+c...  Internals
+        character*1 lflg(0:IO_NBITS-1),cclose
+        integer i,ierr
+
+c-----
+c...  Executable code 
+
+c Open parameter data file for the dump
+        call io_open(7,dparfile,'unknown','formatted',ierr)
+
+	write(7,*) dens
+	write(7,*) relv
+	write(7,*) cluslife
+	write(7,*) clusm,pluma
+	write(7,*) xsun,ysun,zsun
+	write(7,*) vxsun,vysun,vzsun
+	write(7,*) clusmin
+	write(7,*) clusmax
+
+	close(unit = 7)
+
+	return
+	end     ! io_dump_param
+c____________________________________________________________________________
+c
+c
+
+
+
+
