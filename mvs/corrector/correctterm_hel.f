@@ -1,0 +1,164 @@
+c*************************************************************************
+c                        CORRECTTERM_HEL.F
+c*************************************************************************
+c This subroutine calculates a symplectic corrector term 'Z' as given
+c in appendix A of Wisdom 2006
+c             Input:
+c                  nbod        ==>  number of massive bodies (int scalor)
+c                  ntp         ==>  number of tp bodies (int scalor)
+c                  mass        ==>  mass of bodies (real array)
+c                  j2rp2,j4rp4 ==>  J2*radii_pl^2 and  J4*radii_pl^4
+c                                     (real scalars)
+c                  xh,yh,zh    ==>  massive part position in helio coord 
+c                                     (real arrays)
+c                  xht,yht,zht ==>  test part position in heliocentric coord 
+c                                     (real arrays)
+c                  istat       ==>  status of the test paricles
+c                                      (integer array)
+c                                      istat(i) = 0 ==> active:  = 1 not
+c                                    NOTE: it is really a 2d array but 
+c                                          we only use the 1st row
+c             Output:
+c               axht,ayht,azht ==>  tp acceleration in helio coord 
+c                                   (real arrays)
+c
+c Author:  Nathan Kaib  
+c Date:    6/2/09
+c Last revision: 6/2/09
+
+      subroutine correctterm_hel(nbod,npl,ntp,time,mass,j2rp2,j4rp4,xh,
+     &     yh,zh,vxh,vyh,vzh,xht,yht,zht,vxht,vyht,vzht,istat,adt,bdt)
+
+      include '../../swift.inc'
+
+c...  Inputs: 
+      integer nbod,ntp,istat(NTPMAX,NSTAT),bar,npl
+      real*8 mass(NPLMAX),xh(NPLMAX),yh(NPLMAX),zh(NPLMAX)
+      real*8 vxh(NPLMAX),vyh(NPLMAX),vzh(NPLMAX)
+      real*8 xj(NPLMAX),yj(NPLMAX),zj(NPLMAX)
+      real*8 vxj(NPLMAX),vyj(NPLMAX),vzj(NPLMAX)
+
+      real*8 xht(NTPMAX),yht(NTPMAX),zht(NTPMAX),j2rp2,j4rp4
+      real*8 vxht(NTPMAX),vyht(NTPMAX),vzht(NTPMAX)
+
+      real*8 time,cluslife,clusm,xsun,ysun,zsun,pluma
+
+c...  Outputs:
+      real*8 axht(NTPMAX),ayht(NTPMAX),azht(NTPMAX)
+      real*8 axh(NPLMAX),ayh(NPLMAX),azh(NPLMAX)
+      
+c...  Internals:
+      integer i,j
+      real*8 mass2(NPLMAX),mtot
+      real*8 xbar,ybar,zbar,vxbar,vybar,vzbar
+
+      real*8 adt,bdt
+
+c----
+c...  Executable code
+
+c     Do planetary drift and kick -------------------
+      call coord_h2j(nbod,mass,xh,yh,zh,vxh,vyh,vzh,
+     &          xj,yj,zj,vxj,vyj,vzj)
+
+      call drift(nbod,mass,xj,yj,zj,vxj,vyj,vzj,adt)
+
+      call coord_j2h(nbod,mass,xj,yj,zj,vxj,vyj,vzj,
+     &             xh,yh,zh,vxh,vyh,vzh)
+
+c     Get the pl accelerations in helio frame.
+      call getacch(nbod,mass,j2rp2,j4rp4,xj,yj,zj,xh,yh,zh,axh,
+     &     ayh,azh)
+ 
+      call kickvh(nbod,vxh,vyh,vzh,axh,ayh,azh,bdt)
+c     Done with planetary drift and kick --------------
+
+
+c     Do dk-d for tp's--------
+c     drifting heliocentric tp's forward
+      call drift_tp(ntp,mass(1),xht,yht,zht,vxht,vyht,vzht,adt,istat)
+
+c     Get the accelerations in hel. frame.
+      call getacch_tp(nbod,npl,ntp,time,mass,j2rp2,j4rp4,xh,yh,zh,
+     &     xht,yht,zht,istat,axht,ayht,azht,bdt,mass(1),1)
+
+c     Apply a kick for bdt 
+      call kickvh_tp(ntp,vxht,vyht,vzht,axht,ayht,azht,istat,bdt)
+
+c     drifting heliocentric tp's backward
+      adt=0.0-adt
+      call drift_tp(ntp,mass(1),xht,yht,zht,vxht,vyht,vzht,adt,istat)
+c      Done with tp dk-d------------
+
+
+c     Drift pl's backward for adt---------------
+      call coord_h2j(nbod,mass,xh,yh,zh,vxh,vyh,vzh,
+     &          xj,yj,zj,vxj,vyj,vzj)
+
+c..   Drift in Jacobi coords for the full step 
+      call drift(nbod,mass,xj,yj,zj,vxj,vyj,vzj,adt)
+
+c...  After drift, compute helio. xh and vh for acceleration calculations
+      call coord_j2h(nbod,mass,xj,yj,zj,vxj,vyj,vzj,
+     &             xh,yh,zh,vxh,vyh,vzh)
+c     Done with pl backward drift----------------
+
+
+c     Do next half of corrector term
+      bdt = 0.0-bdt  !note: adt is already set to negative
+c     Do planetary drift and kick -------------------
+      call coord_h2j(nbod,mass,xh,yh,zh,vxh,vyh,vzh,
+     &          xj,yj,zj,vxj,vyj,vzj)
+
+      call drift(nbod,mass,xj,yj,zj,vxj,vyj,vzj,adt)
+
+      call coord_j2h(nbod,mass,xj,yj,zj,vxj,vyj,vzj,
+     &             xh,yh,zh,vxh,vyh,vzh)
+
+
+c     Get the pl accelerations in helio frame.
+      call getacch(nbod,mass,j2rp2,j4rp4,xj,yj,zj,xh,yh,zh,axh,
+     &     ayh,azh)
+         
+      call kickvh(nbod,vxh,vyh,vzh,axh,ayh,azh,bdt)
+c     Done with planetary drift and kick --------------
+
+
+
+c     Do -d-k+d for tp's--------
+c     drifting heliocentric tp's forward
+      call drift_tp(ntp,mass(1),xht,yht,zht,vxht,vyht,vzht,adt,istat)
+
+c     Get the accelerations in hel. frame.
+      call getacch_tp(nbod,npl,ntp,time,mass,j2rp2,j4rp4,xh,yh,zh,
+     &     xht,yht,zht,istat,axht,ayht,azht,bdt,mass(1),1)
+
+c     Apply a kick for bdt 
+      call kickvh_tp(ntp,vxht,vyht,vzht,axht,ayht,azht,istat,bdt)
+
+c     drifting heliocentric tp's backward
+      adt=0.0-adt
+      call drift_tp(ntp,mass(1),xht,yht,zht,vxht,vyht,vzht,adt,istat)
+c     Done with tp -d-k+d------------
+
+
+c     Drift pl's backward for -adt---------------
+      call coord_h2j(nbod,mass,xh,yh,zh,vxh,vyh,vzh,
+     &          xj,yj,zj,vxj,vyj,vzj)
+
+c..   Drift in Jacobi coords for the full step 
+      call drift(nbod,mass,xj,yj,zj,vxj,vyj,vzj,adt)
+
+c...  After drift, compute helio. xh and vh for acceleration calculations
+      call coord_j2h(nbod,mass,xj,yj,zj,vxj,vyj,vzj,
+     &             xh,yh,zh,vxh,vyh,vzh)
+c     Done with pl backward drift----------------
+
+      return
+      end      ! getacch_tp
+
+c---------------------------------------------------------------------
+
+
+
+
