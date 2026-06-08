@@ -1,0 +1,147 @@
+c*************************************************************************
+c                            RMVS3_150AU.F
+c*************************************************************************
+c This subroutine checks to see if there are any tp's passing within 40 AU
+c of the Sun
+c
+c             Input:
+c                 nbod          ==>  number of massive bodies (int scalar)
+c                 ntp            ==>  number of massive bodies (int scalar)
+c                 mass          ==>  mass of bodies (real array)
+c                 xh,yh,zh      ==>  initial position in helio coord 
+c                                    (real arrays)
+c                 vxh,vyh,vzh   ==>  initial velocity in helio coord 
+c                                    (real arrays)
+c                 xht,yht,zht    ==>  initial part position in helio coord 
+c                                      (real arrays)
+c                 vxht,vyht,vzht ==>  initial velocity in helio coord 
+c                                        (real arrays)
+c                 istat           ==>  status of the test paricles
+c                                      (integer array)
+c                                      istat(i) = 0 ==> active:  = 1 not
+c                                    NOTE: it is really a 2d array but 
+c                                          we only use the 1st row
+c                 dt            ==>  time step  (real scalor)
+c             Output:
+c                 icflg         ==> ecounters? = 1 Yes
+c                                              =  0 No (integer scalar)  
+c                 ienc          ==> ienc(j) = 0 if tp j not involved in enc 
+c                                           = planet# if it is. 
+c                                           (integer array)
+c                 nclose        ==> number of particles in the planetary region
+c
+c Remarks: Based on RMVS_CHK.F
+c Authors:  Hal Levison 
+c Date:    7/10/96
+c
+c Last revision: 
+
+      subroutine rmvs3_150AU(nbod,ntp,mass,xh,yh,zh,vxh,vyh,vzh,xht,yht,
+     &     zht,vxht,vyht,vzht,istat,dt,ienc,nclose,rcrit)
+
+      include '../swift.inc'
+      include '../rmvs/rmvs.inc'
+
+c...  Inputs: 
+      integer nbod,ntp,istat(NTPMAX,NSTAT)
+      real*8 mass(NPLMAX),dt,rcrit
+      real*8 xht(NTPMAX),yht(NTPMAX),zht(NTPMAX)
+      real*8 vxht(NTPMAX),vyht(NTPMAX),vzht(NTPMAX)
+      real*8 xh(NPLMAX),yh(NPLMAX),zh(NPLMAX)
+      real*8 vxh(NPLMAX),vyh(NPLMAX),vzh(NPLMAX)
+      real*8 xc,yc,zc
+      real*8 vxc,vyc,vzc,mtot
+      real*8 xhtdum,yhtdum,zhtdum
+      real*8 vxhtdum,vyhtdum,vzhtdum
+
+c...  Outputs
+      integer icflg,iflag
+      integer ienc(NTPMAX)
+      
+c...  Internals
+      integer i,j,nclose
+      real*8 r2crit
+      
+c-----
+c...  Executable code 
+
+c...  clear everything out
+      icflg = 0
+      nclose = 0
+      r2crit=rcrit*rcrit
+      
+      do i=1,ntp
+         ienc(i) = 0
+      enddo
+      
+      xc=0.0d0
+      yc=0.0d0
+      zc=0.0d0
+      vxc=0.0d0
+      vyc=0.0d0
+      vzc=0.0d0
+      mtot=mass(1)
+      do i=2,5
+         xc=xc+xh(i)*mass(i)
+         yc=yc+yh(i)*mass(i)
+         zc=zc+zh(i)*mass(i)
+         vxc=vxc+vxh(i)*mass(i)
+         vyc=vyc+vyh(i)*mass(i)
+         vzc=vzc+vzh(i)*mass(i)
+         mtot=mtot+mass(i)
+      enddo
+      xc=xc/mtot
+      yc=yc/mtot
+      zc=zc/mtot
+      vxc=vxc/mtot
+      vyc=vyc/mtot
+      vzc=vzc/mtot
+
+      do j=1,ntp
+         if(istat(j,1).eq.0) then
+            iflag = 0           ! precaution
+
+c     doing this to minimize number of bar -> hel transformations
+c     many bar -> hel trans. leads to loss of accuracy
+            if(istat(j,NSTAT-2).eq.1) then
+               xhtdum=xht(j)-xc
+               yhtdum=yht(j)-yc
+               zhtdum=zht(j)-zc
+               vxhtdum=vxht(j)-vxc
+               vyhtdum=vyht(j)-vyc
+               vzhtdum=vzht(j)-vzc
+            elseif(istat(j,NSTAT-2).eq.0) then
+               xhtdum=xht(j)
+               yhtdum=yht(j)
+               zhtdum=zht(j)
+               vxhtdum=vxht(j)
+               vyhtdum=vyht(j)
+               vzhtdum=vzht(j)
+            endif
+
+            call rmvs3_chk_150AU(nbod,mass,xhtdum,yhtdum,zhtdum,vxhtdum,
+     &           vyhtdum,vzhtdum,dt,iflag,r2crit)
+
+c     if it's in a barycentric region, make sure the coords are now barycentric
+            if(iflag.eq.0.and.istat(j,NSTAT-2).eq.1) then
+               xht(j)=xht(j)-xc
+               yht(j)=yht(j)-yc
+               zht(j)=zht(j)-zc
+               vxht(j)=vxht(j)-vxc
+               vyht(j)=vyht(j)-vyc
+               vzht(j)=vzht(j)-vzc
+               istat(j,NSTAT-2)=0
+            endif
+
+            if(iflag.gt.0) then
+               icflg = 1
+               ienc(j) = 1
+               nclose = nclose + 1
+            endif
+         endif
+      enddo
+
+      return
+      end                       ! rmvs3_chk
+c------------------------------------------------------
+

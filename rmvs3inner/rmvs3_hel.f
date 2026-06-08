@@ -1,0 +1,230 @@
+c*************************************************************************
+c                            RMVS3_hel.F
+c*************************************************************************
+c This subroutine checks to see if there are any tp's passing in the 
+c heliocentric zone
+c
+c             Input:
+c                 nbod          ==>  number of massive bodies (int scalar)
+c                 ntp            ==>  number of massive bodies (int scalar)
+c                 mass          ==>  mass of bodies (real array)
+c                 xh,yh,zh      ==>  initial position in helio coord 
+c                                    (real arrays)
+c                 vxh,vyh,vzh   ==>  initial velocity in helio coord 
+c                                    (real arrays)
+c                 xht,yht,zht    ==>  initial part position in helio coord 
+c                                      (real arrays)
+c                 vxht,vyht,vzht ==>  initial velocity in helio coord 
+c                                        (real arrays)
+c                 istat           ==>  status of the test paricles
+c                                      (integer array)
+c                                      istat(i) = 0 ==> active:  = 1 not
+c                                    NOTE: it is really a 2d array but 
+c                                          we only use the 1st row
+c                 dt            ==>  time step  (real scalor)
+c             Output:
+c                 icflg         ==> ecounters? = 1 Yes
+c                                              =  0 No (integer scalar)  
+c                 ienc          ==> ienc(j) = 0 if tp j not involved in enc 
+c                                           = planet# if it is. 
+c                                           (integer array)
+c                 nclose        ==> number of particles in the planetary region
+c
+c Remarks: Based on RMVS_CHK.F
+c Authors:  Hal Levison 
+c Date:    7/10/96
+c
+c Last revision: 8/18/08 NAK
+
+      subroutine rmvs3_hel(nbod,npl,ntp,time,mass,j2rp2,j4rp4,xh,yh,zh,
+     &     vxh,vyh,vzh,xht,yht,zht,vxht,vyht,vzht,istat,dt,tinc,iclose,
+     &     nclose,rcrit)
+
+      include '../swift.inc'
+      include '../rmvs/rmvs.inc'
+
+c...  Inputs: 
+      integer nbod,ntp,istat(NTPMAX,NSTAT),npl
+      real*8 mass(NPLMAX),dt,rcrit,tinc,j2rp2,j4rp4,time
+      real*8 xht(NTPMAX),yht(NTPMAX),zht(NTPMAX)
+      real*8 vxht(NTPMAX),vyht(NTPMAX),vzht(NTPMAX)
+      real*8 xh(NPLMAX),yh(NPLMAX),zh(NPLMAX)
+      real*8 vxh(NPLMAX),vyh(NPLMAX),vzh(NPLMAX)
+      real*8 xbar,ybar,zbar
+      real*8 vxbar,vybar,vzbar,mtot
+      real*8 xhtdum,yhtdum,zhtdum
+      real*8 vxhtdum,vyhtdum,vzhtdum
+
+c...  Outputs
+      integer icflg,iflag
+      integer iclose(NTPMAX)
+      
+c...  Internals
+      integer i,j,nclose,trans(NTPMAX),ntrans
+      real*8 xh2(NPLMAX),yh2(NPLMAX),zh2(NPLMAX)
+      real*8 vxh2(NPLMAX),vyh2(NPLMAX),vzh2(NPLMAX)
+      real*8 r2crit
+      
+c-----
+c...  Executable code 
+
+c...  clear everything out
+      icflg = 0
+      nclose = 0
+      ntrans = 0
+      r2crit=rcrit*rcrit
+      
+      do i=1,ntp
+         iclose(i) = 0
+         trans(i) = 0
+      enddo
+
+c     calculating numerical barycenter
+      xbar=0.0d0
+      ybar=0.0d0
+      zbar=0.0d0
+      vxbar=0.0d0
+      vybar=0.0d0
+      vzbar=0.0d0
+      mtot=mass(1)
+      do i=2,npl
+         xbar=xbar+xh(i)*mass(i)
+         ybar=ybar+yh(i)*mass(i)
+         zbar=zbar+zh(i)*mass(i)
+         vxbar=vxbar+vxh(i)*mass(i)
+         vybar=vybar+vyh(i)*mass(i)
+         vzbar=vzbar+vzh(i)*mass(i)
+         mtot=mtot+mass(i)
+      enddo
+      xbar=xbar/mtot
+      ybar=ybar/mtot
+      zbar=zbar/mtot
+      vxbar=vxbar/mtot
+      vybar=vybar/mtot
+      vzbar=vzbar/mtot
+
+      do j=1,ntp
+         if(istat(j,1).eq.0) then
+            iflag = 0           ! precaution
+
+c     doing this to minimize number of bar -> hel transformations
+c     many bar -> hel trans. leads to loss of accuracy
+            if(istat(j,NSTAT-2).eq.1) then
+               xhtdum=xht(j)-xbar
+               yhtdum=yht(j)-ybar
+               zhtdum=zht(j)-zbar
+               vxhtdum=vxht(j)-vxbar
+               vyhtdum=vyht(j)-vybar
+               vzhtdum=vzht(j)-vzbar
+            elseif(istat(j,NSTAT-2).eq.0) then
+               xhtdum=xht(j)
+               yhtdum=yht(j)
+               zhtdum=zht(j)
+               vxhtdum=vxht(j)
+               vyhtdum=vyht(j)
+               vzhtdum=vzht(j)
+            endif
+
+            call rmvs3_chk_hel(nbod,mtot,xhtdum,yhtdum,zhtdum,vxhtdum,
+     &           vyhtdum,vzhtdum,dt,iflag,r2crit)
+
+c     if it's in a barycentric region, make sure the coords are now barycentric
+c     same for heliocentric
+            if(iflag.gt.0) then
+               icflg = 1
+               iclose(j) = 1
+               nclose = nclose + 1
+               if (istat(j,NSTAT-2).lt.1.and.istat(j,1).eq.0) then
+                  trans(j) = 1
+                  ntrans = ntrans+1
+               endif
+            elseif (istat(j,NSTAT-2).ge.1.and.istat(j,1).eq.0) then
+               trans(j) = -1
+               ntrans = ntrans+1
+            endif
+            
+c           shutoff non-trans particles
+            if (trans(j).eq.0.and.istat(j,1).eq.0) then 
+               istat(j,1) = -2 !note -1 used in corrector routines
+            endif
+         endif
+      enddo
+
+      if (ntrans.gt.0) then
+c        don't mess with actual pls
+         do i=1,nbod
+            xh2(i)=xh(i)
+            yh2(i)=yh(i)
+            zh2(i)=zh(i)
+            vxh2(i)=vxh(i)
+            vyh2(i)=vyh(i)
+            vzh2(i)=vzh(i)
+         enddo
+         
+c        correcting pls and trans tps to real hamiltonian
+         call corrector(nbod,npl,ntp,time,mass,j2rp2,j4rp4,xh2,yh2,zh2,
+     &        vxh2,vyh2,vzh2,xht,yht,zht,vxht,vyht,vzht,istat,dt,tinc)
+
+c        calculating real barycenter
+         xbar = 0.0
+         ybar = 0.0
+         zbar = 0.0
+         vxbar = 0.0
+         vybar = 0.0
+         vzbar = 0.0
+         do i=2,npl
+            xbar = xbar + xh2(i)*mass(i)
+            ybar = ybar + yh2(i)*mass(i)
+            zbar = zbar + zh2(i)*mass(i)
+            vxbar = vxbar + vxh2(i)*mass(i)
+            vybar = vybar + vyh2(i)*mass(i)
+            vzbar = vzbar + vzh2(i)*mass(i)
+         enddo
+         xbar = xbar/mtot
+         ybar = ybar/mtot
+         zbar = zbar/mtot
+         vxbar = vxbar/mtot
+         vybar = vybar/mtot
+         vzbar = vzbar/mtot
+         
+c        transforming frames for real hamilonian
+         do j=1,ntp
+            if (trans(j).lt.0) then
+               xht(j) = xht(j) - xbar
+               yht(j) = yht(j) - ybar
+               zht(j) = zht(j) - zbar
+               vxht(j) = vxht(j) - vxbar
+               vyht(j) = vyht(j) - vybar
+               vzht(j) = vzht(j) - vzbar
+               istat(j,NSTAT-2) = 0
+            endif
+            if (trans(j).gt.0) then
+               xht(j) = xht(j) + xbar
+               yht(j) = yht(j) + ybar
+               zht(j) = zht(j) + zbar
+               vxht(j) = vxht(j) + vxbar
+               vyht(j) = vyht(j) + vybar
+               vzht(j) = vzht(j) + vzbar
+               istat(j,NSTAT-2) = 1
+            endif
+         enddo
+
+
+c        correcting pls and trans tps to numerical hamiltonian
+         call invcorrector(nbod,npl,ntp,time,mass,j2rp2,j4rp4,xh2,yh2,
+     &        zh2,vxh2,vyh2,vzh2,xht,yht,zht,vxht,vyht,vzht,istat,dt,
+     &        tinc)
+
+      endif
+
+c     turn back on all active tps
+      do j=1,ntp
+         if (istat(j,1).eq.-2) then
+            istat(j,1)=0
+         endif
+      enddo
+
+      return
+      end                       ! rmvs3_chk
+c------------------------------------------------------
+

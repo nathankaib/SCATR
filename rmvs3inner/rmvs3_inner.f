@@ -1,0 +1,369 @@
+c*************************************************************************
+c                            RMVS3_Inner.F
+c*************************************************************************
+c This subroutine takes a step in helio coords when a particle is in the 
+c planetary region.  
+c both massive and test particles
+c INCLUDES close approuches between test particles and planets
+c
+c VERSION 3 of RMVS
+c
+c             Input:
+c                 i1st          ==>  = 0 if first step; = 1 not (int scalar)
+c                 time          ==>  current time (real scalar)
+c                 nbod          ==>  number of massive bodies (int scalar)
+c                 ntp            ==>  number of massive bodies (int scalar)
+c                 mass          ==>  mass of bodies (real array)
+c                 j2rp2,j4rp4   ==>  J2*radii_pl^2 and  J4*radii_pl^4
+c                                     (real scalars)
+c                 xh,yh,zh      ==>  initial planet position in helio coord 
+c                                    (real arrays)
+c                 vxh,vyh,vzh   ==>  initial planet velocity in helio coord 
+c                                    (real arrays)
+c                 xht,yht,zht    ==>  initial tp position in helio coord 
+c                                      (real arrays)
+c                 vxht,vyht,vzht ==>  initial tp velocity in helio coord 
+c                                        (real arrays)
+c                 istat           ==>  status of the test paricles
+c                                      (2d integer array)
+c                                      istat(i,1) = 0 ==> active:  = 1 not
+c                                      istat(i,2) = -1 ==> Danby did not work
+c                 rstat           ==>  status of the test paricles
+c                                      (2d real array)
+c                 dt            ==>  time step
+c                 longasc,argper,
+c                 inc            ==> orbital elements of suns orbit in 
+c                                    molecular cloud (real scalars)
+c             Output:
+c                 xh,yh,zh      ==>  final planet position in helio coord 
+c                                       (real arrays)
+c                 vxh,vyh,vzh   ==>  final planet velocity in helio coord 
+c                                       (real arrays)
+c                 xht,yht,zht    ==>  final tp position in helio coord 
+c                                       (real arrays)
+c                 vxht,vyht,vzht ==>  final tp position in helio coord 
+c                                       (real arrays)
+c
+c
+c Remarks: Based on rmvs2_step.f
+c Authors:  Hal Levison 
+c Date:    7/10/96
+c Last revision: 
+
+c i'm changing this so it counts the flux of comets coming within 1 AU of sun
+c (nathan kaib 8/19/04)
+
+      subroutine rmvs3_inner(i1st,time,nbod,npl,ntp,mass,j2rp2,j4rp4,xh,
+     &     yh,zh,vxh,vyh,vzh,idt,xht,yht,zht,vxht,vyht,vzht,istat,rstat,
+     &     dt,tinc,fopenstat,lclose,rmin,rmax,rmaxu,qmin,rplsq,fluxdist)
+
+      include '../swift.inc'
+      include '../rmvs/rmvs.inc'
+
+c...  Inputs Only: 
+      integer nbod,ntp,i1st,nbod2,istart,nloop
+      real*8 mass(NPLMAX),dt,tinc,j2rp2,j4rp4
+      real*8 time
+
+c...  Inputs and Outputs:
+      integer istat(NTPMAX,NSTAT),idt(NTPMAX)
+      real*8 rstat(NTPMAX,NSTATR)
+      real*8 xh(NPLMAX),yh(NPLMAX),zh(NPLMAX)
+      real*8 vxh(NPLMAX),vyh(NPLMAX),vzh(NPLMAX)
+      real*8 xht(NTPMAX),yht(NTPMAX),zht(NTPMAX)
+      real*8 vxht(NTPMAX),vyht(NTPMAX),vzht(NTPMAX)
+      
+c...  Internals
+      integer i1sttp,i1stpl,i1sto,icflg,i,j,np,clflg
+      real*8 xtmp(NPLMAX,NTPENC),ytmp(NPLMAX,NTPENC)
+      real*8 ztmp(NPLMAX,NTPENC),rts,peri(NTPMAX)
+      real*8 vxtmp(NPLMAX,NTPENC),vytmp(NPLMAX,NTPENC)
+      real*8 vztmp(NPLMAX,NTPENC)
+      real*8 xbeg(NPLMAX),ybeg(NPLMAX),zbeg(NPLMAX)
+      real*8 vxbeg(NPLMAX),vybeg(NPLMAX),vzbeg(NPLMAX)
+      real*8 xend(NPLMAX),yend(NPLMAX),zend(NPLMAX)
+      real*8 vxend(NPLMAX),vyend(NPLMAX),vzend(NPLMAX)
+      Integer nenc(NPLMAX),itpenc(NTPMAX,NPLMAX),ienc(NTPMAX)
+      integer iclose(NTPMAX)
+      integer istattmp(NTPMAX,NSTAT),isperi(NTPMAX)
+
+c...  extra variables for my changes (nathan kaib 8/19/04)
+      character*80 fopenstat
+
+c...  new crap added in to do comet showers efficiently
+      integer g,id,d,npl
+      real*8 xc,yc,zc,vxc,vyc,vzc,mtot,qmin,rplsq(NPLMAX),rmin,rmax
+      real*8 rmaxu
+      real*8 fluxdist,rdist(NTPMAX),rdotv(NTPMAX),rdistnew,rdotvnew
+      real*8 diff,a,e,q,ialpha
+      integer status
+      logical*2 lclose
+
+
+      integer counter
+c----
+c...  Executable code
+
+      xc = 0.
+      yc = 0.
+      zc = 0.
+      vxc = 0.
+      vyc = 0.
+      vzc = 0.
+      mtot = 0.
+
+c     calculating the position and velocity of the center of mass in 
+c     heliocentric coords
+      do i=1,npl
+         xc = xc + xh(i)*mass(i)
+         yc = yc + yh(i)*mass(i)
+         zc = zc + zh(i)*mass(i)
+         vxc = vxc + vxh(i)*mass(i)
+         vyc = vyc + vyh(i)*mass(i)
+         vzc = vzc + vzh(i)*mass(i)
+         mtot = mtot + mass(i)
+      enddo
+      xc = xc/mtot
+      yc = yc/mtot
+      zc = zc/mtot
+      vxc = vxc/mtot
+      vyc = vyc/mtot
+      vzc = vzc/mtot
+
+c     for tp's coords are currently in center of mass frame.  need to transform
+c     to heliocentric coords
+      do i=1,ntp
+         if(istat(i,NSTAT-2).eq.0) then
+            xht(i) = xht(i) + xc
+            yht(i) = yht(i) + yc
+            zht(i) = zht(i) + zc
+            vxht(i) = vxht(i) + vxc
+            vyht(i) = vyht(i) + vyc
+            vzht(i) = vzht(i) + vzc
+            istat(i,NSTAT-2)=1
+         endif
+      enddo
+
+      nloop = nint(tinc)
+
+      i1st = 0
+
+c     starting loop to calculate motions of particles close to the Sun
+      do g=1,nloop
+
+         i1sttp = i1st
+         i1sto = i1st
+
+         do i=1,ntp
+            rdist(i)=sqrt(xht(i)*xht(i)+yht(i)*yht(i)+zht(i)*zht(i))
+            if (rdist(i).gt.50) then
+               istat(i,NSTAT-1)=1
+            endif
+            rdotv(i) = xht(i)*vxht(i)+yht(i)*vyht(i)+zht(i)*vzht(i)
+         enddo
+         
+c...  are there any encounters?         
+         rts = RHSCALE*RHSCALE
+         call rmvs3_chk(nbod,ntp,mass,xh,yh,zh,vxh,vyh,vzh,xht,yht,
+     &        zht,vxht,vyht,vzht,istat,dt,rts,icflg,nenc,itpenc,ienc,2)
+
+c.... if not just do a normal step and leave
+         if(icflg.eq.0) then
+            call step_kdk(i1st,time+(g-1)*dt,nbod,npl,ntp,mass,
+     &           j2rp2,j4rp4,xh,yh,zh,vxh,vyh,vzh,xht,yht,zht,vxht,vyht,
+     &           vzht,istat,rstat,dt,1)
+            do i=1,ntp
+               if(istat(i,1).eq.0) then
+                  istat(i,2) = 0
+               endif
+            enddo
+         endif	
+                  
+c...  ENCOUNTER STUFF FROM HERE ON!!!!!
+c...  save initial x and v of planets if there are planocentric enc
+         
+         if (icflg.ne.0) then 
+            do i=1,nbod
+               xbeg(i) = xh(i)
+               ybeg(i) = yh(i)
+               zbeg(i) = zh(i)
+               vxbeg(i) = vxh(i)
+               vybeg(i) = vyh(i)
+               vzbeg(i) = vzh(i)
+            enddo
+
+c...  do a full step for the planets
+            i1stpl = i1st
+            call step_kdk_pl(i1stpl,nbod,mass,j2rp2,j4rp4,xh,
+     &           yh,zh,vxh,vyh,vzh,dt)
+            
+c...  save the final position and velocity of planets
+            do i=1,nbod
+               xend(i) = xh(i)
+               yend(i) = yh(i)
+               zend(i) = zh(i)
+               vxend(i) = vxh(i)
+               vyend(i) = vyh(i)
+               vzend(i) = vzh(i)
+            enddo
+            
+c...  Now do the interpolation for intermediate steps
+            istart=2
+            call rmvs3_interp(nbod,xbeg,ybeg,zbeg,vxbeg,vybeg,vzbeg,
+     &           xend,yend,zend,vxend,vyend,vzend,dt,mass(1),NTENC,
+     &           xtmp,ytmp,ztmp,vxtmp,vytmp,vztmp,istart)
+
+c...  do the integration
+            call rmvs3_step_out(i1st,nbod,npl,ntp,mass,j2rp2,j4rp4,
+     &           xbeg,ybeg,zbeg,vxbeg,vybeg,vzbeg,xtmp,ytmp,ztmp,vxtmp,
+     &           vytmp,vztmp,xht,yht,zht,vxht,vyht,vzht,istat,ienc,dt,
+     &           isperi,peri,time+(g-1)*dt,istart,1)
+
+c...  As of this point all the test particles that are involved in an
+c...  encounter have been moved.  But not the ones that have not.
+c...  so move those,  BUT NOT the ones in the encounter
+            
+c...  make a temporary istat array so only they are active
+            do i=1,ntp
+               if(istat(i,1).eq.0) then
+                  if(ienc(i).ne.0) then
+                     istattmp(i,1) = 1 ! don't integrate it
+                  else
+                     istattmp(i,1) = 0 ! integrate it
+                  endif
+                  do j=2,NSTAT
+                     istattmp(i,j) = 0
+                  enddo
+               else
+                  istattmp(i,1) = 1 ! don't integrate it
+               endif
+            enddo
+            
+c...  do a full step
+            i1sto = 0           ! we need to recalculate accel arrays
+
+            call step_kdk_tp(i1sto,time+(g-1)*dt,nbod,npl,ntp,mass,
+     &           j2rp2,j4rp4,xbeg,ybeg,zbeg,xend,yend,zend,xht,yht,zht,
+     &           vxht,vyht,vzht,istattmp,dt,1)
+
+c...  fix up the istat array
+            do i=1,ntp
+               if(istattmp(i,2) .ne. 0) then ! danby screwed up
+                  istat(i,1) = 1
+                  do j=2,NSTAT
+                     istat(i,j) = istattmp(i,j)
+                  enddo
+               endif
+            enddo
+            
+c...  put the enc info into istat
+            do i=1,ntp
+               if(istat(i,1).eq.0) then
+                  if(ienc(i).lt.0) then
+                     istat(i,2) = ienc(i)
+                     istat(i,3) = abs(ienc(i))
+                     if(isperi(i).eq.0) then
+                        rstat(i,3) = peri(i)
+                        np = NSTATP + abs(ienc(i)) - 1
+                        if(rstat(i,np).eq.0) then
+                           rstat(i,np) = peri(i)
+                        else
+                           rstat(i,np) = min(rstat(i,np),peri(i))
+                        endif
+                     else
+                        rstat(i,3) = 0.0d0
+                     endif
+                  else if(ienc(i).gt.0) then
+                     istat(i,2) = ienc(i)
+                  else
+                     istat(i,2) = 0
+                  endif
+               endif
+            enddo
+c...  we MUST make sure that the saved accel arrays are ok
+c...  calculate them again
+            i1st = 0
+         endif
+
+         if (ntp.gt.0) then
+c     checking to see if tp's are too close to sun or planets
+         call discard(time+g*dt,dt,nbod,npl,ntp,mass,xh,yh,zh,vxh,vyh,
+     &        vzh,idt,xht,yht,zht,vxht,vyht,vzht,rmin,rmax,rmaxu,qmin,
+     &        lclose,rplsq,istat,rstat)
+         endif
+
+         xc = 0.
+         yc = 0.
+         zc = 0.
+         vxc = 0.
+         vyc = 0.
+         vzc = 0.
+         do i=1,npl
+            xc = xc + xh(i)*mass(i)
+            yc = yc + yh(i)*mass(i)
+            zc = zc + zh(i)*mass(i)
+            vxc = vxc + vxh(i)*mass(i)
+            vyc = vyc + vyh(i)*mass(i)
+            vzc = vzc + vzh(i)*mass(i)
+         enddo
+         xc = xc/mtot
+         yc = yc/mtot
+         zc = zc/mtot
+         vxc = vxc/mtot
+         vyc = vyc/mtot
+         vzc = vzc/mtot
+         do i=1,ntp
+            rdistnew=sqrt(xht(i)*xht(i)+yht(i)*yht(i)+zht(i)*zht(i))
+            rdotvnew=xht(i)*vxht(i)+yht(i)*vyht(i)+zht(i)*vzht(i)
+            diff=(rdist(i)-fluxdist)*(rdistnew-fluxdist)
+
+c            if (istat(i,NSTAT-1).gt.1.and.rdotv(i)*rdotvnew.lt.0) 
+c     &           then
+c               if (rdotvnew.gt.0.and.rdistnew.lt.fluxdist) then 
+c                  status = 1
+c                  call io_write_flux(time,idt(i),xht(i)-xc,yht(i)-yc,
+c     &              zht(i)-zc,vxht(i)-vxc,vyht(i)-vyc,vzht(i)-vzc,
+c     &              status,fopenstat)
+c               else
+c                  status = 2
+c                  call io_write_flux(time,idt(i),xht(i)-xc,yht(i)-yc,
+c     &              zht(i)-zc,vxht(i)-vxc,vyht(i)-vyc,vzht(i)-vzc,
+c     &              status,fopenstat)
+c               endif
+c            endif
+            if (rdotvnew.gt.0.and.rdotv(i).le.0.and.rdistnew.lt.3.0) 
+     &           then
+               call orbel_xv2aeq(xht(i),yht(i),zht(i),
+     &              vxht(i),vyht(i),vzht(i),mtot,ialpha,
+     &              a,e,q)
+               if (e.lt.1.and.q.lt.2.5) then
+                  istat(i,NSTAT-3) = istat(i,NSTAT-3) + 1
+               endif
+            endif
+
+            if (istat(i,NSTAT-1).ge.1.and.diff.lt.0) then
+c               if (rdistnew.lt.fluxdist) then
+               status = -1
+
+               call orbel_xv2aeq(xht(i)-xc,yht(i)-yc,zht(i)-zc,
+     &              vxht(i)-vxc,vyht(i)-vyc,vzht(i)-vzc,mtot,ialpha,
+     &              a,e,q)
+
+               if (abs(q).lt.32.and.a.gt.500) then
+                  call io_write_flux(time,npl,mass,xh,yh,
+     &                 zh,vxh,vyh,vzh,idt(i),xht(i),yht(i),
+     &                 zht(i),vxht(i),vyht(i),vzht(i),fopenstat)
+               endif
+
+c               else
+c                  status = -2
+c               endif
+c               istat(i,NSTAT-1) = 2
+            endif
+         enddo
+
+      enddo
+
+      i1st = 0
+
+      end                       ! step_enc
