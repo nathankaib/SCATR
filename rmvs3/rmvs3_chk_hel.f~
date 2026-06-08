@@ -1,0 +1,122 @@
+c*************************************************************************
+c                            RMVS3_chk_150AU.F
+c*************************************************************************
+c This subroutine checks to see if there are any tp's passing within 150 AU
+c of the Sun
+c
+c             Input:
+c                 nbod          ==>  number of massive bodies (int scalar)
+c                 ntp            ==>  number of massive bodies (int scalar)
+c                 mass          ==>  mass of bodies (real array)
+c                 xh,yh,zh      ==>  initial position in helio coord 
+c                                    (real arrays)
+c                 vxh,vyh,vzh   ==>  initial velocity in helio coord 
+c                                    (real arrays)
+c                 xht,yht,zht    ==>  initial part position in helio coord 
+c                                      (real arrays)
+c                 vxht,vyht,vzht ==>  initial velocity in helio coord 
+c                                        (real arrays)
+c                 istat           ==>  status of the test paricles
+c                                      (integer array)
+c                                      istat(i) = 0 ==> active:  = 1 not
+c                                    NOTE: it is really a 2d array but 
+c                                          we only use the 1st row
+c                 dt            ==>  time step  (real scalor)
+c
+c Remarks: Based on RMVS_CHK.F
+c Authors:  Hal Levison 
+c Date:    7/10/96
+c
+c Last revision: 
+
+      subroutine rmvs3_chk_150AU(nbod,mass,x,y,z,
+     &     vx,vy,vz,dt,iflag,r2crit)
+
+      include '../swift.inc'
+      include '../rmvs/rmvs.inc'
+
+c...  Inputs: 
+      integer ntp,nbod
+      real*8 mass(NPLMAX),dt,rcrit,rout
+      real*8 x,y,z
+      real*8 vx,vy,vz
+      real*8 x2,y2,z2
+      real*8 vx2,vy2,vz2
+
+c...  Internals
+      integer iflag,iflg
+      real*8 r2crit,r,rsq,newr2
+      real*8 mtot
+      real*8 Lx,Ly,Lz,L2,E,vdotr,v2,a,ec,fac,rmin
+      
+c-----
+c...  Executable code 
+
+      iflag = 0
+      rsq=x**2.0+y**2.0+z**2.0
+      r=sqrt(rsq)
+      rcrit=sqrt(r2crit)
+
+
+c     calculating radius outside of which the particle cannot make it inside
+c     even in a freefall
+      rout = (r2crit/sqrt(rcrit) + 1.5*dt*sqrt(2.0*mass(1)))**(2.0/3.0)
+      
+c     Stop if outside of freefall radius (won't get inside in one timestep)
+      if (r .ge. rout) then
+         iflag = 0
+         return
+      endif
+
+      if (rsq .le. r2crit) then
+         iflag = 1
+         return
+      endif	
+      
+c...  We're not yet inside and are converging so we need to calc. the
+c     .           minimum separation attained in time dt.
+      
+c     Calculating perihelion
+      mtot=mass(1)+mass(2)+mass(3)+mass(4)+mass(5)
+      v2 = vx*vx + vy*vy + vz*vz
+      E = .5*v2 - mtot/r
+      if (E .lt. 0) then 
+         a = mtot/(-2.d0*E)
+      else
+         a = mtot/(2.d0*E)
+      endif
+      
+      Lx = y*vz - z*vy
+      Ly = z*vx - x*vz
+      Lz = x*vy - y*vx
+      L2 = Lx*Lx + Ly*Ly + Lz*Lz
+      
+      rmin = (-mtot + sqrt(mtot**2 + 2.d0*E*L2))/E/2.d0
+
+c     Stop if perihelion is outside 150 AU
+      if (rmin .ge. rcrit) then 
+         iflag = 0
+         return
+      endif
+
+c     Drifting for big step to see if particle enters critical radius
+      iflg=0
+      x2 = x
+      y2 = y
+      z2 = z
+      vx2 = vx
+      vy2 = vy
+      vz2 = vz
+      call drift_one(mtot,x2,y2,z2,vx2,vy2,vz2,dt,iflg)
+      newr2 = x2*x2+y2*y2+z2*z2
+      
+      if (newr2.lt.r2crit) then
+         iflag = 1
+         return
+      endif
+
+      return
+      end
+      
+
+            

@@ -1,0 +1,167 @@
+c*************************************************************************
+c                            RMVS3_40AU.F
+c*************************************************************************
+c This subroutine checks to see if there are any tp's passing within 40 AU
+c of the Sun
+c
+c             Input:
+c                 nbod          ==>  number of massive bodies (int scalar)
+c                 ntp            ==>  number of massive bodies (int scalar)
+c                 mass          ==>  mass of bodies (real array)
+c                 xh,yh,zh      ==>  initial position in helio coord 
+c                                    (real arrays)
+c                 vxh,vyh,vzh   ==>  initial velocity in helio coord 
+c                                    (real arrays)
+c                 xht,yht,zht    ==>  initial part position in helio coord 
+c                                      (real arrays)
+c                 vxht,vyht,vzht ==>  initial velocity in helio coord 
+c                                        (real arrays)
+c                 istat           ==>  status of the test paricles
+c                                      (integer array)
+c                                      istat(i) = 0 ==> active:  = 1 not
+c                                    NOTE: it is really a 2d array but 
+c                                          we only use the 1st row
+c                 dt            ==>  time step  (real scalor)
+c             Output:
+c                 icflg         ==> ecounters? = 1 Yes
+c                                              =  0 No (integer scalar)  
+c                 ienc          ==> ienc(j) = 0 if tp j not involved in enc 
+c                                           = planet# if it is. 
+c                                           (integer array)
+c
+c Remarks: Based on RMVS_CHK.F
+c Authors:  Hal Levison 
+c Date:    7/10/96
+c
+c Last revision: 
+
+      subroutine rmvs3_40AU(nbod,ntp,mass,xh,yh,zh,vxh,vyh,vzh,xht,yht,
+     &       zht,vxht,vyht,vzht,istat,dt,icflg,ienc)
+
+      include '../swift.inc'
+      include '../rmvs/rmvs.inc'
+
+c...  Inputs: 
+      integer nbod,ntp,istat(ntp)
+      real*8 mass(nbod),xh(nbod),yh(nbod),zh(nbod),dt
+      real*8 xht(ntp),yht(ntp),zht(ntp)
+      real*8 vxh(nbod),vyh(nbod),vzh(nbod)
+      real*8 vxht(ntp),vyht(ntp),vzht(ntp)
+
+c...  Outputs
+       integer icflg
+       integer ienc(NTPMAX)
+
+c...  Internals
+       integer i,j,iflag
+       real*8 r2crit,r2critp
+       real*8 xr,yr,zr,vxr,vyr,vzr
+
+       integer i1st    ! =0 first time through; =1 after
+       data i1st/0/
+       save i1st
+
+c-----
+c...  Executable code 
+
+c...  clear everything out
+       
+       icflg = 0
+       r2crit=40.*40.
+       
+       do i=1,ntp
+          ienc(i) = 0
+       enddo
+       
+       do j=1,ntp
+          if(istat(j).eq.0) then
+              
+             i = 2
+             iflag = 0          ! precaution
+              
+c... Check for close encounters until we find one or run out of planets. BG
+             r2=xht(i)**2+yht(i)**2+zht(i)**2
+             r=sqrt(r2)
+
+c     Stop if outside of 210 AU (won't get inside in one timestep)
+             if (r .ge. 210.d0) then
+                iflag = 0
+                return
+             endif
+
+             if (r2 .le. r2crit) then
+                iflag = 1
+                return
+             endif
+             
+c...    If we're heading outward, use r2 to calc iflag
+             vdotr = xht(i)*vxht(i) + yht(i)*vyht(i) + zht(i)*vzht(i)
+             if (vdotr . gt. 0.d0) then
+                if (r2 .ge. r2crit) then
+                   iflag = 0
+                endif
+                return
+             endif	
+
+c...  We're not yet inside and are converging so we need to calc. the
+c     .           minimum separation attained in time dt.
+
+c     Calculating perihelion
+             v2 = vxht(i)*vxht(i) + vyht(i)*vyht(i) + vzht(i)*vzht(i)
+             E = .5*v2 - mass(1)/r
+             if (E .lt. 0) then a = M/(-2.d0*E)
+             if (E .gt. 0) then a = M/(2.d0*E)
+
+             Lx = yht(i)*vzht(i) - zht(i)*vyht(i)
+             Ly = zht(i)*vxht(i) - xht(i)*vzht(i)
+             Lz = xht(i)*vyht(i) - yht(i)*vxht(i)
+             L2 = Lx*Lx + Ly*Ly + Lz*Lz
+
+             rmin = (-mass(1) + sqrt(mass(1)**2 + 2.d0*E*L2))/E/2.d0
+c     Stop if perihelion is outside 40 AU
+             if (rmin .ge. 40) then 
+                iflag = 0
+                return
+             endif
+
+c     Calculating eccentricity
+             fac = h2/m/a
+             if (E .lt. 0) then e = sqrt(1.d0 - fac)
+             if (E .gt. 0) then e = sqrt(1.d0 + fac)
+
+c     Calculating angles for R and 40 AU
+             fR = acos((a*(1.d0 - e*e) - r)/e/r)
+             f40 = acos((a*(1.d0 - e*e) - 40.d0)/e/40.d0
+             fdiff = abs(fR - f40)
+
+c     Calculating rate of area sweeping and area to be swept
+             Adot = .5*sqrt(L2)
+             
+
+             if (r2min.le.r2critp)then
+                iflag = -1
+             else if(r2min.le.r2crit)then
+                iflag = 1
+             else 
+                iflag = 0
+             endif
+
+
+
+
+             if(iflag.gt.0) then
+                icflg = 1
+                ienc(j) = i
+                nenc(i) = nenc(i) + 1
+                itpenc(nenc(i),i) = j
+             endif
+             
+             i = i + 1          ! next planet
+          enddo
+       endif
+      enddo
+      
+      return
+      end                       ! rmvs3_chk
+c------------------------------------------------------
+
